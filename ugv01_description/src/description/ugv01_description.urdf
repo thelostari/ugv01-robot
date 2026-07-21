@@ -1,0 +1,80 @@
+<?xml version="1.0"?>
+<robot name="ugv01" xmlns:xacro="http://ros.org/wiki/xacro">
+
+<link name="base_link">
+  <visual>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <geometry>
+      <box size="0.23 0.20 0.07"/>
+    </geometry>
+    <material name="black">
+      <color rgba="0.1 0.1 0.1 0.5"/>
+    </material>
+  </visual>
+
+  <!-- Main chassis collision -->
+  <collision>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <geometry>
+      <box size="0.24 0.21 0.08"/>
+    </geometry>
+  </collision>
+
+  <!-- Left track collision -->
+  <collision>
+    <origin xyz="0 0.07 -0.015" rpy="0 0 0"/>
+    <geometry>
+      <box size="0.24 0.05 0.08"/>
+    </geometry>
+  </collision>
+
+  <!-- Right track collision -->
+  <collision>
+    <origin xyz="0 -0.07 -0.015" rpy="0 0 0"/>
+    <geometry>
+      <box size="0.24 0.05 0.08"/>
+    </geometry>
+  </collision>
+</link>
+
+<link name="left_wheel_link">
+  <visual>
+    <origin xyz="0 0 0" rpy="1.5708 0 0"/>
+    <geometry>
+      <cylinder radius="0.04" length="0.044"/>
+    </geometry>
+    <material name="gray">
+      <color rgba="0.6 0.6 0.6 1.0"/>
+    </material>
+  </visual>
+</link>
+
+<link name="right_wheel_link">
+  <visual>
+    <origin xyz="0 0 0" rpy="1.5708 0 0"/>
+    <geometry>
+      <cylinder radius="0.04" length="0.044"/>
+    </geometry>
+    <material name="gray">
+      <color rgba="0.6 0.6 0.6 1.0"/>
+    </material>
+  </visual>
+</link>
+
+<joint name="left_wheel_joint" type="continuous">
+  <parent link="base_link"/>
+  <child  link="left_wheel_link"/>
+  <origin xyz="0 0.07 -0.015" rpy="0 0 0"/>
+  <axis   xyz="0 1 0"/>
+</joint>
+
+<joint name="right_wheel_joint" type="continuous">
+  <parent link="base_link"/>
+  <child  link="right_wheel_link"/>
+  <origin xyz="0 -0.07 -0.015" rpy="0 0 0"/>
+  <axis   xyz="0 1 0"/>
+</joint>
+
+</robot>
+
+placa de madeira: 30 23 1.1 => 0.30 0.23 0.011
