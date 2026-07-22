@@ -1,6 +1,7 @@
 <?xml version="1.0"?>
 <robot name="ugv01" xmlns:xacro="http://ros.org/wiki/xacro">
 
+<!-- Main chassis -->
 <link name="base_link">
   <visual>
     <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -37,19 +38,9 @@
   </collision>
 </link>
 
-<link name="left_wheel_link">
-  <visual>
-    <origin xyz="0 0 0" rpy="1.5708 0 0"/>
-    <geometry>
-      <cylinder radius="0.04" length="0.044"/>
-    </geometry>
-    <material name="gray">
-      <color rgba="0.6 0.6 0.6 1.0"/>
-    </material>
-  </visual>
-</link>
 
-<link name="right_wheel_link">
+<!-- Left wheel -->
+<link name="left_wheel_link">
   <visual>
     <origin xyz="0 0 0" rpy="1.5708 0 0"/>
     <geometry>
@@ -68,6 +59,20 @@
   <axis   xyz="0 1 0"/>
 </joint>
 
+
+<!-- Right wheel -->
+<link name="right_wheel_link">
+  <visual>
+    <origin xyz="0 0 0" rpy="1.5708 0 0"/>
+    <geometry>
+      <cylinder radius="0.04" length="0.044"/>
+    </geometry>
+    <material name="gray">
+      <color rgba="0.6 0.6 0.6 1.0"/>
+    </material>
+  </visual>
+</link>
+
 <joint name="right_wheel_joint" type="continuous">
   <parent link="base_link"/>
   <child  link="right_wheel_link"/>
@@ -75,6 +80,58 @@
   <axis   xyz="0 1 0"/>
 </joint>
 
-</robot>
 
-placa de madeira: 30 23 1.1 => 0.30 0.23 0.011
+<!-- Wood plate -->
+<link name="plate_link">
+  <visual>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <geometry>
+      <box size="0.30 0.23 0.011"/>
+    </geometry>
+    <material name="brown">
+      <color rgba="0.6 0.4 0.2 1.0"/>
+    </material>
+  </visual>
+
+  <collision>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <geometry>
+      <box size="0.30 0.23 0.011"/>
+    </geometry>
+  </collision>
+</link>
+
+<joint name="plate_joint" type="fixed">
+  <parent link="base_link"/>
+  <child  link="plate_link"/>
+  <origin xyz="0 0 0.0405" rpy="0 0 0"/>
+</joint>
+
+
+<!-- LiDAR -->
+<link name="lidar_link">
+  <visual>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <geometry>
+      <cylinder radius="0.035" length="0.02"/>
+    </geometry>
+    <material name="black2">
+      <color rgba="0.1 0.1 0.1 1.0"/>
+    </material>
+  </visual>
+
+  <collision>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <geometry>
+      <cylinder radius="0.035" length="0.02"/>
+    </geometry>
+  </collision>
+</link>
+
+<joint name="lidar_joint" type="fixed">
+  <parent link="plate_link"/>
+  <child  link="lidar_link"/>
+  <origin xyz="0.108 0 0.045" rpy="0 0 0"/>
+</joint>
+
+</robot>
