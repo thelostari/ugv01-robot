@@ -24,7 +24,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
-			'ugv01_http_driver = ugv01_http_driver.robot_comm_node_v3:main'
+			'ugv01_http_driver = ugv01_http_driver.robot_comm_node_v4:main'
         ],
     },
 )
