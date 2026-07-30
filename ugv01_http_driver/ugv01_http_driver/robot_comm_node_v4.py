@@ -40,7 +40,7 @@ class UGV01HttpDriver(Node):
         # robot ip address from wiki
         self.declare_parameter('robot_ip', '192.168.4.1')
         # wheel_base = 187.39 - 44.5 = 142.89 mm (from product specifications)
-        self.declare_parameter('wheel_base', 0.19682)	# meters
+        self.declare_parameter('wheel_base', 0.14289)	# meters 19682
         self.declare_parameter('cmd_vel_rate', 10.0)	# Hz
         self.declare_parameter('cmd_vel_timeout', 3.0)	# seconds
         self.declare_parameter('ina219_rate', 1.0)      # Hz
@@ -673,6 +673,9 @@ class UGV01HttpDriver(Node):
             # Wheel speeds in m/s
             v_l = float(data['L'])
             v_r = float(data['R'])
+
+            # to test and calibrate odometry
+            # v_l, v_r = self.compute_wheel_speeds()
 
             # Publish left wheel speed
             left_speed_msg = Float32()
