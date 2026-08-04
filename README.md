@@ -6,7 +6,7 @@ This repository contains a few ROS2 packages for the foundation of navigation of
 - LiDAR controls for the [RPLIDAR A1](https://www.slamtec.com/en/lidar/a1) by SLAMTEC (see sllidar_ros2 directory for the specific README file with instructions, or SLAMTEC's own [repository](https://github.com/Slamtec/sllidar_ros2) in case of updates)
 
 ## How To Use
-NOTE: This code was developed with ROS2 Humble in Ubuntu 22.04. It was completely tested in ROS2 Humble in Ubuntu 22.04, and partially tested in ROS2 Jazzy in Ubuntu 24.04 running on a Raspberry Pi 5. It should be compatible with other ROS2 and Ubuntu versions, but some modifications may be needed. When using terminals for the instructions below, there may be errors caused by environment variables set by vscode, so prefer using system terminals outside of vscode to avoid that.
+NOTE: This code was developed with ROS2 Humble in Ubuntu 22.04. It was completely tested in ROS2 Humble in Ubuntu 22.04, and partially tested in ROS2 Jazzy in Ubuntu 24.04 running on a Raspberry Pi 5. It should be compatible with other ROS2 and Ubuntu versions, but some modifications may be needed. When using terminals for the instructions below, there may be errors (especially iwth RViz) caused by environment variables set by vscode, so prefer using system terminals outside of vscode to avoid that.
 
 1. Add these packages to the src folder of a ROS2 workspace. If needed, check ROS2 documentation on how to [install it](https://docs.ros.org/en/humble/Installation.html), [configure the environment](https://docs.ros.org/en/humble/Tutorials/Beginner-CLI-Tools/Configuring-ROS2-Environment.html), and [create a workspace](https://docs.ros.org/en/humble/Tutorials/Beginner-Client-Libraries/Creating-A-Workspace/Creating-A-Workspace.html).
 2. Use [colcon](https://docs.ros.org/en/humble/Tutorials/Beginner-Client-Libraries/Colcon-Tutorial.html) to build the workspace. There should be no errors, only warnings from sllidar.
@@ -19,7 +19,7 @@ If you only want to control the robot via keyboard over wifi.
 
 1. Turn on the robot
 2. Connect your computer to the robot's wifi (UGV01_BASE)
-3. Open a terminal, move to the workspace root and source the ROS2 installation (this step has probably already been done before building the workspace) as well as the workspace itself
+3. Open a terminal, move to the workspace root and source the ROS2 installation as well as the workspace itself
 ```bash
 cd <workspace_name>
 source /opt/ros/<distro>/setup.bash
@@ -107,9 +107,31 @@ ros2 run teleop_twist_keyboard teleop_twist_keyboard
 6. With the terminal running teleop_twist_keyboard in focus, follow the key bindings to move the robot
 7. Additionally, you can see the odometry readings by opening a third terminal, moving to the workspace root, sourcing the ROS2 installation as well as the workspace itself, and running the ROS2 topic echo tool
 ```bash
+cd <workspace_name>
+source /opt/ros/<distro>/setup.bash
+source install/setup.bash
+
 ros2 topic echo /odom
 ```
 
-## Next Steps
-
 ## Potentially Useful Resources
+### UGV01 Robot
+- https://github.com/waveshareteam
+- https://www.waveshare.com/product/robotics/mobile-robots/ugv01.htm
+- https://www.waveshare.com/wiki/UGV01
+
+### LiDAR
+- https://github.com/Slamtec
+- https://github.com/Slamtec/sllidar_ros2
+- https://www.youtube.com/watch?v=ao13F-L_TAI
+- https://www.youtube.com/watch?v=OSoMSVry-8E
+
+### ROS2
+- https://docs.ros.org/en/humble/Tutorials.html
+- https://github.com/ros
+- https://github.com/ros/ros_tutorials/tree/humble
+
+### ROS2 Nav
+- https://docs.nav2.org/setup_guides/index.html
+- https://github.com/ros-navigation
+- https://docs.ros.org/en/ros2_packages/humble/api/slam_toolbox/
