@@ -4,17 +4,20 @@ import json
 import queue
 import threading
 import itertools
+import tf2_ros
+import math
 from dataclasses import dataclass
 from typing import Any, Optional
 
 import rclpy
 from rclpy.node import Node
 from rclpy.time import Time
-from geometry_msgs.msg import Twist, Vector3
 from std_msgs.msg import Float32, Float64, String
 from std_srvs.srv import Trigger
+from geometry_msgs.msg import Twist, Vector3, TransformStamped
+from nav_msgs.msg import Odometry
 
-from .http_connection_v2 import UGV01Http
+from .http_connection import UGV01Http
 
 try:
     from custom_interfaces.srv import SendGenericJson
@@ -36,11 +39,13 @@ class UGV01HttpDriver(Node):
         # Parameters
         # robot ip address from wiki
         self.declare_parameter('robot_ip', '192.168.4.1')
-        # wheel_base = 187.39 - 44 = 143.39 mm (from product specifications)
-        self.declare_parameter('wheel_base', 0.14339)	# meters
+        # wheel_base = 187.39 - 44.5 = 142.89 mm (from product specifications)
+        self.declare_parameter('wheel_base', 0.14289)	# meters 19682
         self.declare_parameter('cmd_vel_rate', 10.0)	# Hz
         self.declare_parameter('cmd_vel_timeout', 3.0)	# seconds
+        self.declare_parameter('ina219_rate', 1.0)      # Hz
         self.declare_parameter('imu_rate', 1.0)			# Hz
+        self.declare_parameter('encoder_rate', 10.0)	# Hz
         self.declare_parameter('generic_json_service_timeout', 1.0)	 # seconds
 
         self.ip_addr: str = (
@@ -55,8 +60,14 @@ class UGV01HttpDriver(Node):
         self.cmd_vel_timeout: float = (
             self.get_parameter('cmd_vel_timeout').get_parameter_value().double_value
         )
+        self.ina219_rate: float = (
+            self.get_parameter('ina219_rate').get_parameter_value().double_value
+        )
         self.imu_rate: float = (
             self.get_parameter('imu_rate').get_parameter_value().double_value
+        )
+        self.encoder_rate: float = (
+            self.get_parameter('encoder_rate').get_parameter_value().double_value
         )
         self.generic_json_service_timeout: float = (
             self.get_parameter('generic_json_service_timeout').get_parameter_value().double_value
@@ -86,10 +97,10 @@ class UGV01HttpDriver(Node):
             msg_type=Vector3, topic='magn', qos_profile=10
         )
         self.ip_pub = self.create_publisher(
-            msg_type = String, topic='ip', qos_profile=10
+            msg_type=String, topic='ip', qos_profile=10
         )
         self.mac_pub = self.create_publisher(
-            msg_type = String, topic='mac', qos_profile=10
+            msg_type=String, topic='mac', qos_profile=10
         )
         self.rssi_pub = self.create_publisher(
             msg_type=Float32, topic='rssi', qos_profile=10
@@ -102,6 +113,13 @@ class UGV01HttpDriver(Node):
         )
         self.gyro_pub = self.create_publisher(
             msg_type=Vector3, topic='gyro', qos_profile=10
+        )
+        # TODO: verify if msg_type of speeds should be Float32 or 64
+        self.left_speed_pub = self.create_publisher(
+            msg_type=Float32, topic='left_wheel_speed', qos_profile=10
+        )
+        self.right_speed_pub = self.create_publisher(
+            msg_type=Float32, topic='right_wheel_speed', qos_profile=10
         )
         self.shunt_mV_pub = self.create_publisher(
             msg_type=Float64, topic='shunt_mV', qos_profile=10
@@ -119,13 +137,31 @@ class UGV01HttpDriver(Node):
             msg_type=Float64, topic='power_mW', qos_profile=10
         )
 
+        # Odometry
+        self.odom_pub = self.create_publisher(
+            msg_type=Odometry, topic='odom', qos_profile=10
+        )
+
+        # TF broadcaster for odom -> base_link
+        self.tf_broadcaster = tf2_ros.TransformBroadcaster(self)
+
+        # Odometry state (in odom frame)
+        self.odom_x: float = 0.0
+        self.odom_y: float = 0.0
+        self.odom_theta: float = 0.0
+
+        # Last time we updated odom (for dt)
+        self.last_odom_time: Time = self.get_clock().now()
+
         # Priority queue support
         self.job_queue: queue.PriorityQueue[tuple[int, int, RobotJob]] = queue.PriorityQueue()
         self.job_counter = itertools.count()
         self.stop_worker = threading.Event()
         self.queue_state_lock = threading.Lock()
         self.cmd_vel_job_pending = False
+        self.ina219_job_pending = False
         self.imu_job_pending = False
+        self.encoder_job_pending = False
         
         if SendGenericJson is not None:
             self.generic_json_srv = self.create_service(
@@ -154,9 +190,17 @@ class UGV01HttpDriver(Node):
             timer_period_sec=(1.0 / self.cmd_vel_rate),
             callback=self.cmd_vel_timer_callback
         )
+        self.ina219_timer = self.create_timer(
+            timer_period_sec=(1.0 / self.ina219_rate),
+            callback=self.ina219_timer_callback
+        )
         self.imu_timer = self.create_timer(
             timer_period_sec=(1.0 / self.imu_rate),
             callback=self.imu_timer_callback
+        )
+        self.encoder_timer = self.create_timer(
+            timer_period_sec=(1.0 / self.encoder_rate),
+            callback=self.encoder_timer_callback
         )
 
         self.get_logger().info(f"UGV01 HTTP driver started, IP={self.ip_addr}")
@@ -188,8 +232,22 @@ class UGV01HttpDriver(Node):
             self.cmd_vel_job_pending = True
 
         self.enqueue_job(priority=0, category="cmd_vel")
-        
-            
+    
+
+    def ina219_timer_callback(self) -> None:
+        """
+        Called periodically at ina219_rate Hz to add a read ina219 job to the queue.
+        Only adds it if there isn't one there already.
+        """
+
+        with self.queue_state_lock:
+            if self.ina219_job_pending:
+                return
+            self.ina219_job_pending = True
+
+        self.enqueue_job(priority=2, category="read_ina219")
+
+
     def imu_timer_callback(self) -> None:
         """
         Called periodically at imu_rate Hz to add a read imu job to the queue.
@@ -202,6 +260,20 @@ class UGV01HttpDriver(Node):
             self.imu_job_pending = True
 
         self.enqueue_job(priority=2, category="read_imu")
+
+
+    def encoder_timer_callback(self) -> None:
+        """
+        Called periodically at encoder_rate Hz to add a read encoder job to the queue.
+        Only adds it if there isn't one there already.
+        """
+
+        with self.queue_state_lock:
+            if self.encoder_job_pending:
+                return
+            self.encoder_job_pending = True
+        
+        self.enqueue_job(priority=1, category="read_encoder")
 
 
     def send_generic_json_callback(self, request, response):
@@ -277,7 +349,7 @@ class UGV01HttpDriver(Node):
         count = next(self.job_counter)
         job = RobotJob(category=category, payload=payload, reply_queue=reply_queue)
         self.job_queue.put((priority, count, job))
-        print(f"a new job has been added to the queue! total jobs: {self.job_queue.qsize()}")
+        #print(f"a new job has been added to the queue! total jobs: {self.job_queue.qsize()}")
     
 
     # ----------------------------------------- #
@@ -334,6 +406,32 @@ class UGV01HttpDriver(Node):
                         self.get_logger().warn(
                             f"HTTP error (the velocity command may have reached the robot and been executed anyway): {info}"
                         )
+                
+                # Get INA219 info
+                elif job.category == "read_ina219":
+                    ok, info = self.hw_interface.get_ina219_info()
+
+                    # INA219 info was obtained successfully
+                    if ok:
+                        self.get_logger().debug(
+                            f"GET_INA219 command executed successfully! {info}"
+                        )
+
+                        parsed = self.parse_info(info)
+
+                        if isinstance(parsed, dict):
+                            self.publish_ina219(parsed)
+                        
+                        else:
+                            self.get_logger().warn(
+                                f"{job.category} returned non-dict: {parsed}"
+                            )
+                    
+                    # INA219 info was not obtained sucessfully
+                    elif not ok and info is not None:
+                        self.get_logger().warn(
+                            f"{job.category} failed: {info}"
+                        )
 
                 # Get IMU info
                 elif job.category == "read_imu":
@@ -361,6 +459,32 @@ class UGV01HttpDriver(Node):
                             f"{job.category} failed: {info}"
                         )
 
+                # Get encoder info
+                elif job.category == "read_encoder":
+                    ok, info = self.hw_interface.get_encoder_info()
+
+                    # Encoder info was obtained successfully
+                    if ok:
+                        self.get_logger().debug(
+                            f"GET_ENCODER command executed successfully! {info}"
+                        )
+
+                        parsed = self.parse_info(info)
+                        
+                        if isinstance(parsed, dict):
+                            self.publish_encoder(parsed)
+                        
+                        else:
+                            self.get_logger().warn(
+                                f"{job.category} returned non-dict: {parsed}"
+                            )
+
+                    # Encoder info was not obtained successfully
+                    elif not ok and info is not None:
+                        self.get_logger().warn(
+                            f"{job.category} failed: {info}"
+                        )
+
                 # Send generic json command
                 elif job.category == 'generic_json':
                     ok, info = self.hw_interface.send_generic_json(job.payload)
@@ -373,6 +497,7 @@ class UGV01HttpDriver(Node):
                     if job.reply_queue is not None:
                         job.reply_queue.put((ok, info))
             
+                # Unknown job
                 else:
                     self.get_logger().warn(
                         f"Unknown job kind: {job.category}"
@@ -390,8 +515,12 @@ class UGV01HttpDriver(Node):
                 with self.queue_state_lock:
                     if job.category == 'cmd_vel':
                         self.cmd_vel_job_pending = False
+                    elif job.category == 'read_ina219':
+                        self.ina219_job_pending = False
                     elif job.category == 'read_imu':
                         self.imu_job_pending = False
+                    elif job.category == 'read_encoder':
+                        self.encoder_job_pending = False
             
                 self.job_queue.task_done()
 
@@ -411,6 +540,71 @@ class UGV01HttpDriver(Node):
                 return info
 
         return info
+    
+
+    def publish_ina219(self, data: dict[str, Any]) -> None:
+        try:
+            # Publish shunt_mV
+            shunt_msg = Float64()
+            shunt_msg.data = float(data['shunt_mV'])
+
+            self.shunt_mV_pub.publish(shunt_msg)
+            self.get_logger().info(
+                f"Publishing shunt_mV: {shunt_msg.data}"
+            )
+
+            # Publish load_V
+            load_msg = Float64()
+            load_msg.data = float(data['load_V'])
+
+            self.load_V_pub.publish(load_msg)
+            self.get_logger().info(
+                f"Publishing load_V: {load_msg.data}"
+            )
+
+            # Publish bus_V
+            bus_msg = Float64()
+            bus_msg.data = float(data['bus_V'])
+
+            self.bus_V_pub.publish(bus_msg)
+            self.get_logger().info(
+                f"Publishing bus_V: {bus_msg.data}"
+            )
+
+            # Publish current_mA
+            current_msg = Float64()
+
+            # TODO: decidir se vale a pena publicar ou não quando o valor for None
+            if data['current_mA'] == None:
+                current_msg.data = 0.0
+            else:
+                current_msg.data = float(data['current_mA'])
+
+            self.current_mA_pub.publish(current_msg)
+            self.get_logger().info(
+                f"Publishing current_mA: {current_msg.data}"
+            )
+
+            # Publish power_mW
+            power_msg = Float64()
+
+            # TODO: decidir se vale a pena publicar ou não quando o valor for None
+            if data['power_mW'] == None:
+                power_msg.data = 0.0
+            else:
+                power_msg.data = float(data['power_mW'])
+
+            self.power_mW_pub.publish(power_msg)
+            self.get_logger().info(
+                f"Publishing power_mW: {power_msg.data}"
+            )
+
+        except KeyError as e:
+            self.get_logger().warn(f'Missing INA219 field in response: {e}')
+
+        except (TypeError, ValueError) as e:
+            self.get_logger().warn(f'Invalid INA219 data in response: {e}')
+
 
     def publish_imu(self, data: dict[str, Any]) -> None:
         try:
@@ -472,6 +666,102 @@ class UGV01HttpDriver(Node):
 
         except (TypeError, ValueError) as e:
             self.get_logger().warn(f'Invalid IMU data in response: {e}')
+
+
+    def publish_encoder(self, data: dict[str, Any]) -> None:
+        try:
+            # Wheel speeds in m/s
+            v_l = float(data['L'])
+            v_r = float(data['R'])
+
+            # to test and calibrate odometry
+            # v_l, v_r = self.compute_wheel_speeds()
+
+            # Publish left wheel speed
+            left_speed_msg = Float32()
+            left_speed_msg.data = v_l
+
+            self.left_speed_pub.publish(left_speed_msg)
+            self.get_logger().info(
+                f"Publishing left wheel speed: {left_speed_msg.data} m/s"
+            )
+
+            # Publish right wheel speed
+            right_speed_msg = Float32()
+            right_speed_msg.data = v_r
+
+            self.right_speed_pub.publish(right_speed_msg)
+            self.get_logger().info(
+                f"Publishing right wheel speed: {right_speed_msg.data} m/s"
+            )
+
+            ## Odometry for navigation ##
+
+            # Time step
+            now: Time = self.get_clock().now()
+            dt: float = (now - self.last_odom_time).nanoseconds * 1e-9
+            if dt <= 0.0:
+                dt = 1.0 / self.encoder_rate  # fallback
+
+            # Differential drive kinematics
+            L: float = self.wheel_base
+            v: float = 0.5 * (v_r + v_l)      # linear velocity (m/s)
+            w: float = (v_r - v_l) / L        # angular velocity (rad/s)
+
+            # Integrate pose in odom frame
+            self.odom_x += v * math.cos(self.odom_theta) * dt
+            self.odom_y += v * math.sin(self.odom_theta) * dt
+            self.odom_theta += w * dt
+
+            # Normalize theta to [-pi, pi]
+            self.odom_theta = math.atan2(math.sin(self.odom_theta), math.cos(self.odom_theta))
+
+            # Update last time
+            self.last_odom_time = now
+
+            # Fill in Odometry message
+            odom_msg = Odometry()
+            odom_msg.header.stamp = now.to_msg()
+            odom_msg.header.frame_id = 'odom'
+            odom_msg.child_frame_id = 'base_link'
+
+            # Pose
+            odom_msg.pose.pose.position.x = self.odom_x
+            odom_msg.pose.pose.position.y = self.odom_y
+            odom_msg.pose.pose.position.z = 0.0
+
+            # Convert yaw (theta) to quaternion
+            qz = math.sin(self.odom_theta * 0.5)
+            qw = math.cos(self.odom_theta * 0.5)
+            odom_msg.pose.pose.orientation.z = qz
+            odom_msg.pose.pose.orientation.w = qw
+
+            # Fill twist with current v and w
+            odom_msg.twist.twist.linear.x = v
+            odom_msg.twist.twist.angular.z = w
+
+            # Publish odometry
+            self.odom_pub.publish(odom_msg)
+
+            # Publish TF odom -> base_link
+            tf_msg = TransformStamped()
+            tf_msg.header.stamp = now.to_msg()
+            tf_msg.header.frame_id = 'odom'
+            tf_msg.child_frame_id = 'base_link'
+            tf_msg.transform.translation.x = self.odom_x
+            tf_msg.transform.translation.y = self.odom_y
+            tf_msg.transform.translation.z = 0.0
+            tf_msg.transform.rotation.z = qz
+            tf_msg.transform.rotation.w = qw
+
+            self.tf_broadcaster.sendTransform(tf_msg)
+
+        
+        except KeyError as e:
+            self.get_logger().warn(f"Missing speed field in response: {e}")
+        
+        except (TypeError, ValueError) as e:
+            self.get_logger().warn(f"Invalid speed data in response: {e}")
 
 
     # -------- #
